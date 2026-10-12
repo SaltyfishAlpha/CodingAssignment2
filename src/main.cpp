@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+#include "tiny_obj_loader.h"
+
 struct App {
     // screen size
     int width = 1920;
@@ -39,12 +41,66 @@ static GLuint gCubeVertexCount = 0;
 static GLuint gGridVao = 0;
 static GLuint gGridVertexCount = 0;
 
+static GLuint gPhongProgram = 0;
+static GLuint objVertexCount = 0;
+static GLuint gObjVao = 0;
+
+struct GPhongUniformLoc {
+    // vertex uniform
+    GLint uModelLoc;
+    GLint uProjectViewLoc;
+    GLint uNormalMatrixLoc;
+
+    // light uniform
+    GLint uLightPosLoc;
+    GLint uLightColorLoc;
+    GLint uAmbientColorLoc;
+
+    // camera uniform
+    GLint uViewPosLoc;
+
+    // object uniform
+    GLint uColorLoc;
+
+    // coefficient uniform
+    GLint kaLoc;
+    GLint kdLoc;
+    GLint ksLoc;
+    GLint alphaLoc;
+};
+static GPhongUniformLoc gPhongUniformLoc;
+
+struct GPhongUniform {
+    // vertex uniform
+    glm::mat4 uModel;
+    glm::mat4 uProjectView;
+    glm::mat3 uNormalMatrix;
+
+    // light uniform
+    glm::vec3 uLightPos;
+    glm::vec3 uLightColor;
+    glm::vec3 uAmbientColor;
+
+    // camera uniform
+    glm::vec3 uViewPos;
+
+    // object uniform
+    glm::vec3 uColor;
+
+    // coefficient uniform
+    float ka;
+    float kd;
+    float ks;
+    float alpha;
+};
+
 // colors
 const glm::vec3 LIGHT_GRAY(0.28f, 0.31f, 0.34f); // Gray
 const glm::vec3 DARK_GRAY(0.11f, 0.12f, 0.14f); // Dark Gray
 const glm::vec3 YELLOW(0.83f, 0.64f, 0.36f); // Yellow
 const glm::vec3 BLUE(0.32f, 0.58f, 0.78f); // Blue
 const glm::vec3 RED(0.80f, 0.36f, 0.36f); // Red
+const glm::vec3 WHITE(1.0f); // White
 
 // ###########################################################################################
 // Shaders
@@ -106,6 +162,72 @@ static GLuint link_program(const std::string& vertPath, const std::string& fragP
 // Meshes
 // ###########################################################################################
 
+// OBJ Model
+struct Vertex {
+    float pos[3];
+    float normal[3];
+};
+
+static GLuint upload_vertices(const std::vector<Vertex>& vertices) {
+    GLuint vao = 0;
+    GLuint vbo = 0;
+
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(Vertex)),
+        vertices.data(), GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0); // layout(location = 0) in vec3 aPos;
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                          (void*)offsetof(Vertex, pos));
+
+    glEnableVertexAttribArray(1); // layout(location = 1) in vec3 aNormal;
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                          (void*)offsetof(Vertex, normal));
+
+    return vao;
+}
+
+static GLuint make_obj(const std::string& path) {
+    tinyobj::ObjReaderConfig config;
+    config.triangulate = true;
+    config.mtl_search_path = std::string(ASSET_DIR);
+
+    tinyobj::ObjReader reader;
+    if (!reader.ParseFromFile(path, config)) {
+        std::cerr << "TinyObjReader error: " << reader.Error() << "\n";
+        return -1;
+    }
+    if (!reader.Warning().empty())
+        std::cout << "TinyObjReader warning: " << reader.Warning() << "\n";
+
+    const auto& attrib = reader.GetAttrib();
+    const auto& shapes = reader.GetShapes();
+
+    std::vector<Vertex> vertices;
+    for (const auto& shape : shapes) {
+        for (const auto& idx : shape.mesh.indices) {
+            Vertex v{};
+            v.pos[0] = attrib.vertices[3 * idx.vertex_index + 0];
+            v.pos[1] = attrib.vertices[3 * idx.vertex_index + 1];
+            v.pos[2] = attrib.vertices[3 * idx.vertex_index + 2];
+
+            if (idx.normal_index >= 0) {
+                v.normal[0] = attrib.normals[3 * idx.normal_index + 0];
+                v.normal[1] = attrib.normals[3 * idx.normal_index + 1];
+                v.normal[2] = attrib.normals[3 * idx.normal_index + 2];
+            }
+            vertices.push_back(v);
+        }
+    }
+
+    objVertexCount = static_cast<GLuint>(vertices.size());
+    return upload_vertices(vertices);
+}
 
 static GLuint upload_positions(const std::vector<float>& positions) {
     GLuint vao = 0; // vertex array object: how to interpret the vertex data
@@ -192,6 +314,31 @@ static void draw_mesh(GLuint vao, GLuint count, GLenum mode, const glm::mat4& mv
     glDrawArrays(mode, 0, static_cast<GLint>(count));
 }
 
+static void draw_mesh(GLuint vao, GLuint count, GLenum mode, const GPhongUniform& uniform) { // material including version
+    // set the Model-View-Projection matrix
+    glUniformMatrix4fv(gPhongUniformLoc.uModelLoc, 1, GL_FALSE, glm::value_ptr(uniform.uModel));
+    glUniformMatrix4fv(gPhongUniformLoc.uProjectViewLoc, 1, GL_FALSE, glm::value_ptr(uniform.uProjectView));
+    glUniformMatrix3fv(gPhongUniformLoc.uNormalMatrixLoc, 1, GL_FALSE, glm::value_ptr(uniform.uNormalMatrix));
+
+    glUniform3fv(gPhongUniformLoc.uLightPosLoc, 1, glm::value_ptr(uniform.uLightPos));
+    glUniform3fv(gPhongUniformLoc.uLightColorLoc, 1, glm::value_ptr(uniform.uLightColor));
+    glUniform3fv(gPhongUniformLoc.uAmbientColorLoc, 1, glm::value_ptr(uniform.uAmbientColor));
+
+    glUniform3fv(gPhongUniformLoc.uViewPosLoc, 1, glm::value_ptr(uniform.uViewPos));
+
+    glUniform3fv(gPhongUniformLoc.uColorLoc, 1, glm::value_ptr(uniform.uColor));
+
+    glUniform1f(gPhongUniformLoc.kaLoc, uniform.ka);
+    glUniform1f(gPhongUniformLoc.kdLoc, uniform.kd);
+    glUniform1f(gPhongUniformLoc.ksLoc, uniform.ks);
+    glUniform1f(gPhongUniformLoc.alphaLoc, uniform.alpha);
+
+    // bind the vertex array
+    glBindVertexArray(vao);
+    // draw the vertices
+    glDrawArrays(mode, 0, static_cast<GLint>(count));
+}
+
 // ###########################################################################################
 // Transform
 // ###########################################################################################
@@ -210,18 +357,22 @@ static glm::mat4 model_matrix(const glm::vec3& position, float radians, const gl
 // Camera
 // ###########################################################################################
 
-// Unity Camera position and orientation
-static glm::mat4 view_matrix() {
+// Camera position
+static glm::vec3 eye_vec() {
     const float cosPitch = std::cos(gApp.pitch);
     // eye position is calculated based on the pitch and yaw angles
-    const glm::vec3 eye(
+    return {
         gApp.distance * cosPitch * std::sin(gApp.yaw), // x coordinate
         gApp.distance * std::sin(gApp.pitch), // y coordinate
         gApp.distance * cosPitch * std::cos(gApp.yaw) // z coordinate
-    );
+    };
+}
+
+// Unity Camera position and orientation
+static glm::mat4 view_matrix() {
     // return the view matrix
     // lookAt(camera position, target position, up vector)
-    return glm::lookAt(eye, glm::vec3(0.0f, 0.5f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    return glm::lookAt(eye_vec(), glm::vec3(0.0f, 0.5f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 }
 
 // Unity Camera field of view, aspect, near plane, far plane
@@ -252,13 +403,27 @@ static void draw_scene(float time) {
     draw_mesh(gGridVao, gGridVertexCount, GL_LINES, vp, LIGHT_GRAY);
 
     // draw the near cube first using triangles
-    const glm::mat4 nearModel = model_matrix(glm::vec3(0.0f, 0.5f, 0.0f), time * 0.6f, glm::vec3(1.0f));
+    const glm::mat4 nearModel = model_matrix(glm::vec3(1.7f, 0.5f, 0.0f), time * 0.6f, glm::vec3(1.0f));
     draw_mesh(gCubeVao, gCubeVertexCount, GL_TRIANGLES, vp * nearModel, YELLOW);
 
     // draw the far cube second
     // the depth test keeps the nearer fragment, so the yellow cube still wins where the two overlap
     const glm::mat4 farModel = model_matrix(glm::vec3(-2.5f, 0.25f, -1.7f), 0.0f, glm::vec3(0.5f));
     draw_mesh(gCubeVao, gCubeVertexCount, GL_TRIANGLES, vp * farModel, BLUE);
+}
+
+static void draw_obj() {
+    const glm::mat4 model = model_matrix(glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.5f));
+    const glm::mat4 vp = projection_matrix() * view_matrix();
+    const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(model)));
+
+    draw_mesh(gObjVao, objVertexCount, GL_TRIANGLES, {
+         model, vp, normalMatrix,
+        glm::vec3(5.0f, 5.0f, 5.0f), RED, BLUE,
+        eye_vec(),
+        WHITE,
+        0.3, 0.8, 0.5, 32.0f
+    });
 }
 
 // ###########################################################################################
@@ -373,7 +538,9 @@ int main() {
 
     // link the shaders
     try {
-        gProgram = link_program(std::string(SHADER_DIR) + "/color_vert.glsl",
+        gProgram = link_program(std::string(SHADER_DIR) + "/simple_vert.glsl",
+        std::string(SHADER_DIR) + "/simple_frag.glsl");
+        gPhongProgram = link_program(std::string(SHADER_DIR) + "/color_vert.glsl",
                                 std::string(SHADER_DIR) + "/color_frag.glsl");
     } catch (const std::exception& ex) {
         std::cerr << ex.what() << "\n";
@@ -384,11 +551,27 @@ int main() {
     gMvpLoc = glGetUniformLocation(gProgram, "uMVP");
     gColorLoc = glGetUniformLocation(gProgram, "uColor");
 
+    gPhongUniformLoc = {
+        glGetUniformLocation(gPhongProgram, "uModel"),
+        glGetUniformLocation(gPhongProgram, "uProjectView"),
+        glGetUniformLocation(gPhongProgram, "uNormalMatrix"),
+        glGetUniformLocation(gPhongProgram, "uLightPos"),
+        glGetUniformLocation(gPhongProgram, "uLightColor"),
+        glGetUniformLocation(gPhongProgram, "uAmbientColor"),
+        glGetUniformLocation(gPhongProgram, "uViewPos"),
+        glGetUniformLocation(gPhongProgram, "uColor"),
+        glGetUniformLocation(gPhongProgram, "ka"),
+        glGetUniformLocation(gPhongProgram, "kd"),
+        glGetUniformLocation(gPhongProgram, "ks"),
+        glGetUniformLocation(gPhongProgram, "alpha")
+    };
+
     // make the meshes
     gCubeVao = make_cube();
     gGridVao = make_grid();
-    // use the program
-    glUseProgram(gProgram);
+
+    gObjVao = make_obj(std::string(ASSET_DIR) + "/robot_arm.obj");
+
     // enable the depth test
     glEnable(GL_DEPTH_TEST);
     // set the background color
@@ -409,8 +592,12 @@ int main() {
         glViewport(0, 0, gApp.width, gApp.height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // draw the scene 
+        // draw the scene
+        glUseProgram(gProgram);
         draw_scene(time);
+
+        glUseProgram(gPhongProgram);
+        draw_obj();
         // swap the buffers to display the new frame
         glfwSwapBuffers(window);
     }

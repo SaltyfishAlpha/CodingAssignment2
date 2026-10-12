@@ -71,7 +71,10 @@ CS6983_GL_FUNC(void, glGetProgramInfoLog, GLuint, GLsizei, GLsizei*, GLchar*);
 CS6983_GL_FUNC(void, glUseProgram, GLuint);
 CS6983_GL_FUNC(GLint, glGetUniformLocation, GLuint, const GLchar*);
 CS6983_GL_FUNC(void, glUniformMatrix4fv, GLint, GLsizei, GLboolean, const GLfloat*);
+CS6983_GL_FUNC(void, glUniformMatrix3fv, GLint, GLsizei, GLboolean, const GLfloat*);
+CS6983_GL_FUNC(void, glUniform3fv, GLint, GLsizei, const GLfloat*);
 CS6983_GL_FUNC(void, glUniform3f, GLint, GLfloat, GLfloat, GLfloat);
+CS6983_GL_FUNC(void, glUniform1f, GLint, GLfloat);
 
 inline bool load_gl() {
     int missing = 0;
@@ -107,7 +110,10 @@ inline bool load_gl() {
     CS6983_LOAD(glUseProgram);
     CS6983_LOAD(glGetUniformLocation);
     CS6983_LOAD(glUniformMatrix4fv);
+    CS6983_LOAD(glUniformMatrix3fv);
+    CS6983_LOAD(glUniform3fv);
     CS6983_LOAD(glUniform3f);
+    CS6983_LOAD(glUniform1f);
 #undef CS6983_LOAD
     return missing == 0;
 }

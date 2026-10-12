@@ -28,13 +28,19 @@ FetchContent_MakeAvailable(glm)
 add_executable(cs6983_opengl_intro
   src/main.cpp
   src/gl_loader.hpp
+        extern/impl.cpp
 )
 
 target_link_libraries(cs6983_opengl_intro PRIVATE glfw glm::glm)
+target_include_directories(cs6983_opengl_intro PRIVATE extern/tinyobjloader)
 
 # Forward slashes, so the path survives as a C string on Windows.
 file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/shaders" SHADER_DIR_FWD)
 target_compile_definitions(cs6983_opengl_intro PRIVATE "SHADER_DIR=\"${SHADER_DIR_FWD}\"")
+
+# asset dir
+file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/assets" ASSET_DIR_FWD)
+target_compile_definitions(cs6983_opengl_intro PRIVATE "ASSET_DIR=\"${ASSET_DIR_FWD}\"")
 
 if (MSVC)
   target_compile_options(cs6983_opengl_intro PRIVATE /W4 /permissive-)
